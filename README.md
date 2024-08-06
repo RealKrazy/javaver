@@ -16,6 +16,8 @@ Move the executable to the desired directory. Afterwards, add that directory to 
 
 `setx /M path "%path%;C:\your\path\here\"`
 
+**WARNING: using the provided shell script will truncate the input data to 1024 characters. This is most likely insufficient. Make sure you know what you are doing.**
+
 **Be careful and responsible.**
 
 ## Usage
