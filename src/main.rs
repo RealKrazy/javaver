@@ -6,6 +6,7 @@ use std::{env, ffi::OsString, fs, iter, path::PathBuf};
 use std::os::windows::ffi::OsStrExt;
 
 use clap::{Parser, Subcommand};
+use dialoguer::Select;
 use javaver::config::{self, JavaverConfig, SDKConfig};
 use winapi::shared::minwindef::LPARAM;
 use winapi::um::winuser;
@@ -40,7 +41,7 @@ enum Commands {
     /// Select added SDKs as current
     Sel {
 
-        name: String,
+        name: Option<String>,
 
     },
     /// Remove an already-added SDK from the list
@@ -125,6 +126,47 @@ fn validate_java_path(path: &PathBuf) -> bool {
     true
 }
 
+fn select_dialoguer(config: &JavaverConfig) {
+    let list = config.sdk.iter().map(|sdk| sdk.name.as_str()).collect::<Vec<&str>>();
+
+    let select = Select::new()
+        .with_prompt("Choose existing SDK from the list")
+        .items(&list)
+        .interact()
+        .unwrap();
+
+    select_named(config, &config.sdk.get(select).unwrap().name);
+}
+
+fn select_named(config: &JavaverConfig, name: &str) {
+    if !config.contains_name(name) {
+        println!("There is no SDK added named '{}'", name);
+        return;
+    }
+
+    let sdk = config.sdk.iter().find(|sdk| &sdk.name == name).unwrap();
+    let path = sdk.path.to_str().unwrap();
+    let path_bin = &sdk.path.join("bin");
+    let path_bin = path_bin.to_str().unwrap();
+
+    let mut path_vars = read_system_path_var();
+    if let Some(pos) = path_vars.iter().position(|el| el.to_lowercase() == path_bin.to_lowercase()) {
+        path_vars.remove(pos);
+    }
+
+    path_vars.insert(0, path_bin.to_owned());
+
+    if let Err(err) = set_system_path_var(path_vars.join(";").as_str()) {
+        println!("Error when modifying system-wide 'Path' environment variable: {}\nYou might not be running as an administrator.", err);
+        return;
+    }
+    
+    notify_env_change();
+
+    env::set_var("JAVA_HOME", path);
+    println!("Successfully selected '{}' as current Java SDK", name);
+}
+
 fn main() {
     let mut config;
     let config_path = get_exe_dir().unwrap().join(PathBuf::from(CONFIG_PATH));
@@ -207,32 +249,10 @@ fn main() {
             config.sdk.push(SDKConfig::new(name, path));
         }
         Some(Commands::Sel { name }) => {
-            if !config.contains_name(name) {
-                println!("There is no SDK added named '{}'", name);
-                return;
+            match name {
+                Some(name) => select_named(&config, name.as_str()),
+                None => select_dialoguer(&config),
             }
-
-            let sdk = config.sdk.iter().find(|sdk| &sdk.name == name).unwrap();
-            let path = sdk.path.to_str().unwrap();
-            let path_bin = &sdk.path.join("bin");
-            let path_bin = path_bin.to_str().unwrap();
-
-            let mut path_vars = read_system_path_var();
-            if let Some(pos) = path_vars.iter().position(|el| el.to_lowercase() == path_bin.to_lowercase()) {
-                path_vars.remove(pos);
-            }
-
-            path_vars.insert(0, path_bin.to_owned());
-
-            if let Err(err) = set_system_path_var(path_vars.join(";").as_str()) {
-                println!("Error when modifying system-wide 'Path' environment variable: {}\nYou might not be running as an administrator.", err);
-                return;
-            }
-            
-            notify_env_change();
-
-            env::set_var("JAVA_HOME", path);
-            println!("Successfully selected '{}' as current Java SDK", name);
         },
         Some(Commands::Rm { name }) => {
             if !config.contains_name(name.as_str()) {
