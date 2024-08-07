@@ -6,7 +6,7 @@ use std::{env, ffi::OsString, fs, iter, path::PathBuf};
 use std::os::windows::ffi::OsStrExt;
 
 use clap::{Parser, Subcommand};
-use dialoguer::Select;
+use dialoguer::{Input, MultiSelect, Select};
 use javaver::config::{self, JavaverConfig, SDKConfig};
 use winapi::shared::minwindef::LPARAM;
 use winapi::um::winuser;
@@ -36,6 +36,12 @@ enum Commands {
 
         name: String,
         path: PathBuf,
+
+    },
+    /// Modify an already-added SDK
+    Modify {
+
+        name: String,
 
     },
     /// Select added SDKs as current
@@ -113,7 +119,7 @@ fn notify_env_change() {
 
 fn validate_java_path(path: &PathBuf) -> bool {
     if !path.exists() {
-        println!("Provided path doesn't exist.");
+        println!("Provided path does not exist.");
         return false;
     }
 
@@ -124,6 +130,106 @@ fn validate_java_path(path: &PathBuf) -> bool {
     }
 
     true
+}
+
+fn auto(config: &mut JavaverConfig, paths: &Vec<PathBuf>) {
+    for path in paths.iter() {
+        println!("Searching in: {}", path.display());
+        if !path.exists() {
+            println!("Path does not exist. Skipping...");
+            continue;
+        }
+
+        let subpaths = match fs::read_dir(path) {
+            Ok(subpaths) => subpaths,
+            Err(err) => {
+                println!("Error encountered while trying to fetch subdirectories: {}\nSkipping...", err);
+                continue;
+            }
+        };
+
+        for subpath in subpaths {
+            if subpath.is_err() {
+                println!("Encountered an erroneous subdirectory entry: {}\nSkipping...", subpath.unwrap_err());
+                continue;
+            }
+
+            let subpath = subpath.unwrap();
+            if !validate_java_path(&subpath.path()) {
+                println!("Subdirectory is not a Java SDK path. Skipping...");
+                continue;
+            }
+
+            let name = subpath.file_name().into_string().unwrap();
+            if config.contains_name(name.as_str()) {
+                println!("SDK under the name '{}' has already been added. Please choose a different name and add the SDK manually.", name);
+                continue;
+            }
+
+            config.sdk.push(SDKConfig::new(&name, &subpath.path()));
+            println!("Successfully added: '{}' under the name '{}'.", subpath.path().display(), name);
+        }
+    }
+}
+
+fn modify(config: &mut JavaverConfig, name: &String) {
+    if !config.contains_name(name) {
+        println!("Provided name does not exist in the SDK list");
+        return;
+    }
+
+    let config_copy = config.clone(); // to look up names after the mutable borrow
+    let sdk = config.sdk.iter_mut().find(|sdk| &sdk.name == name).unwrap();
+
+    let options = vec!["Modify name", "Modify path"];
+    let selection = MultiSelect::new()
+        .with_prompt("Select what you would like to modify")
+        .items(&options)
+        .interact()
+        .unwrap();
+
+    // modify name
+    if selection.contains(&0) {
+        loop {
+            let new_name: String = Input::new()
+                .with_prompt("Enter new name")
+                .allow_empty(false)
+                .interact_text()
+                .unwrap();
+
+            if config_copy.contains_name(new_name.as_str()) {
+                println!("This name is already in use. Please try again.");
+                continue;
+            }
+
+            sdk.name = new_name;
+
+            println!("Name successfully modified.");
+            break;
+        }
+    }
+
+    // modify path
+    if selection.contains(&1) {
+        loop {
+            let new_path: String = Input::new()
+                .with_prompt("Enter new path")
+                .allow_empty(false)
+                .interact_text()
+                .unwrap();
+
+            let path = PathBuf::from(new_path);
+            if !validate_java_path(&path) {
+                println!("Please try again.");
+                continue;
+            }
+
+            sdk.path = path;
+
+            println!("Path successfully modified.");
+            break;
+        }
+    }
 }
 
 fn select_dialoguer(config: &JavaverConfig) {
@@ -163,6 +269,7 @@ fn select_named(config: &JavaverConfig, name: &str) {
     
     notify_env_change();
 
+    // TODO: set global java home, if present
     env::set_var("JAVA_HOME", path);
     println!("Successfully selected '{}' as current Java SDK", name);
 }
@@ -198,43 +305,7 @@ fn main() {
                 paths.push(path.into());
             }
 
-            for path in paths.iter() {
-                println!("Searching in: {}", path.display());
-                if !path.exists() {
-                    println!("Path does not exist. Skipping...");
-                    continue;
-                }
-
-                let subpaths = match fs::read_dir(path) {
-                    Ok(subpaths) => subpaths,
-                    Err(err) => {
-                        println!("Error encountered while trying to fetch subdirectories: {}\nSkipping...", err);
-                        continue;
-                    }
-                };
-
-                for subpath in subpaths {
-                    if subpath.is_err() {
-                        println!("Encountered an erroneous subdirectory entry: {}\nSkipping...", subpath.unwrap_err());
-                        continue;
-                    }
-
-                    let subpath = subpath.unwrap();
-                    if !validate_java_path(&subpath.path()) {
-                        println!("Subdirectory is not a Java SDK path. Skipping...");
-                        continue;
-                    }
-
-                    let name = subpath.file_name().into_string().unwrap();
-                    if config.contains_name(name.as_str()) {
-                        println!("SDK under the name '{}' has already been added. Please choose a different name and add the SDK manually.", name);
-                        continue;
-                    }
-
-                    config.sdk.push(SDKConfig::new(&name, &subpath.path()));
-                    println!("Successfully added: '{}' under the name '{}'.", subpath.path().display(), name);
-                }
-            }
+            auto(&mut config, &paths);
         }
         Some(Commands::Add { name, path }) => {
             if !validate_java_path(path) {
@@ -253,7 +324,10 @@ fn main() {
                 Some(name) => select_named(&config, name.as_str()),
                 None => select_dialoguer(&config),
             }
-        },
+        }
+        Some(Commands::Modify { name }) => {
+            modify(&mut config, name);
+        }
         Some(Commands::Rm { name }) => {
             if !config.contains_name(name.as_str()) {
                 println!("There is no SDK under the name '{}'.", name);

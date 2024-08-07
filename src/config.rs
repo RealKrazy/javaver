@@ -3,12 +3,12 @@ use std::{fs::File, io::{self, Read, Write}, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct JavaverConfig {
     pub sdk: Vec<SDKConfig>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SDKConfig {
     pub name: String,
     pub path: PathBuf,
