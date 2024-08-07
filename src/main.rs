@@ -6,7 +6,7 @@ use std::{env, ffi::OsString, fs, iter, path::PathBuf};
 use std::os::windows::ffi::OsStrExt;
 
 use clap::{Parser, Subcommand};
-use dialoguer::{Input, MultiSelect, Select};
+use dialoguer::{Confirm, Input, MultiSelect, Select};
 use javaver::config::{self, JavaverConfig, SDKConfig};
 use winapi::shared::minwindef::LPARAM;
 use winapi::um::winuser;
@@ -94,11 +94,26 @@ fn read_system_path_var() -> Vec<String> {
     path.1.split(';').map(|entry| entry.to_string()).collect()
 }
 
-fn set_system_path_var(value: &str) -> io::Result<()> {
+fn read_system_java_home_var() -> Option<String> {
+    let vars = read_system_vars();
+    let var = vars.iter().find(|el| el.0 == "JAVA_HOME")?;
+
+    Some(var.1.to_owned())
+}
+
+fn set_system_var(name: &str, value: &str) -> io::Result<()> {
     let hkcu = RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE);
     let env = hkcu.open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", winreg::enums::KEY_WRITE)?;
 
-    env.set_value("Path", &value)
+    env.set_value(name, &value)
+}
+
+fn set_system_path_var(value: &str) -> io::Result<()> {
+    set_system_var("Path", value)
+}
+
+fn set_system_java_home_var(value: &str) -> io::Result<()> {
+    set_system_var("JAVA_HOME", value)
 }
 
 fn notify_env_change() {
@@ -266,11 +281,26 @@ fn select_named(config: &JavaverConfig, name: &str) {
         println!("Error when modifying system-wide 'Path' environment variable: {}\nYou might not be running as an administrator.", err);
         return;
     }
+
+    if read_system_java_home_var().is_some() {
+        if let Err(err) = set_system_java_home_var(path) {
+            println!("Error when setting new JAVA_HOME: {}", err);
+        }
+    } else {
+        let confirm = Confirm::new()
+            .with_prompt("Do you wish to add JAVA_HOME to the system-wide environment variables?")
+            .interact()
+            .unwrap();
+
+        if confirm {
+            if let Err(err) = set_system_java_home_var(path) {
+                println!("Error when setting new JAVA_HOME: {}", err);
+            }
+        }
+    }
     
     notify_env_change();
 
-    // TODO: set global java home, if present
-    env::set_var("JAVA_HOME", path);
     println!("Successfully selected '{}' as current Java SDK", name);
 }
 
