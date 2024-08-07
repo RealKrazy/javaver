@@ -1,5 +1,12 @@
 # Changelog
 
+## [07.08.2024] 0.2
+
+### Added
+
+- Modify SDKs' names and paths
+- Set JAVA_HOME when selecting
+
 ## [06.08.2024] 0.1
 
 ### Added
